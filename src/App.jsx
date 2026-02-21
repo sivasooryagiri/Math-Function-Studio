@@ -287,11 +287,16 @@ function detectDivisionDiscontinuities(ast, context, view, sampleCount) {
   const disc = [];
   const seen = new Set();
 
-  const evalSub = (sub, x) =>
-    evaluateAst(sub, {
-      ...context,
-      x
-    });
+  const evalSub = (sub, x) => {
+    try {
+      return evaluateAst(sub, {
+        ...context,
+        x
+      });
+    } catch {
+      return NaN;
+    }
+  };
 
   divisions.forEach(({ num, den }) => {
     const denFn = (x) => evalSub(den, x);
@@ -534,7 +539,7 @@ export default function App() {
     const basePlots = functions
       .filter((fn) => fn.visible && fn.name && !errors[fn.id])
       .map((fn) => {
-        const ast = registry.asts[fn.name];
+        const ast = registry.asts ? registry.asts[fn.name] : null;
         const context = {
           x: 0,
           constants: { pi: Math.PI, e: Math.E },
@@ -543,7 +548,14 @@ export default function App() {
           stack: []
         };
         const sampleCount = Math.max(600, Math.floor(size.width * 2));
-        const discontinuities = ast ? detectDivisionDiscontinuities(ast, context, view, sampleCount) : [];
+        let discontinuities = [];
+        if (ast) {
+          try {
+            discontinuities = detectDivisionDiscontinuities(ast, context, view, sampleCount);
+          } catch {
+            discontinuities = [];
+          }
+        }
         const epsilon = (view.xMax - view.xMin) / (sampleCount * 1.5);
 
         const dots = [];
