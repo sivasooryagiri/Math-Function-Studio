@@ -560,8 +560,6 @@ export default function App() {
 
         const dots = [];
         const asymptotes = [];
-        const breaks = [];
-        const asymptoteSet = new Set();
         discontinuities.forEach((d) => {
           const xPx = clamp(((d.x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
           if (d.removable && d.y !== null && Number.isFinite(d.y)) {
@@ -601,52 +599,11 @@ export default function App() {
               );
               dots.push({ x: xPx, y: yPx, filled: false });
             }
-            if (!asymptoteSet.has(xPx.toFixed(2))) {
-              asymptoteSet.add(xPx.toFixed(2));
-              asymptotes.push(xPx);
-            }
+            asymptotes.push(xPx);
           }
         });
 
-        // Always break on division discontinuities.
-        discontinuities.forEach((d) => {
-          breaks.push({ x: d.x, epsilon });
-        });
-
-        // Heuristic break detection for functions like tan(x) that spike to infinity
-        // without explicit division nodes in the AST.
-        const jumpThreshold = Math.max(12, (view.yMax - view.yMin) * 6);
-        let prevY = null;
-        for (let i = 0; i < sampleCount; i += 1) {
-          const x = view.xMin + (i / (sampleCount - 1)) * (view.xMax - view.xMin);
-          let y;
-          try {
-            y = registry.compiled[fn.name](x);
-          } catch {
-            y = NaN;
-          }
-          if (!Number.isFinite(y) || Math.abs(y) > jumpThreshold) {
-            breaks.push({ x, epsilon });
-            const xPx = clamp(((x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
-            const key = xPx.toFixed(2);
-            if (!asymptoteSet.has(key)) {
-              asymptoteSet.add(key);
-              asymptotes.push(xPx);
-            }
-            prevY = null;
-            continue;
-          }
-          if (prevY !== null && Math.abs(y - prevY) > jumpThreshold) {
-            breaks.push({ x, epsilon });
-            const xPx = clamp(((x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
-            const key = xPx.toFixed(2);
-            if (!asymptoteSet.has(key)) {
-              asymptoteSet.add(key);
-              asymptotes.push(xPx);
-            }
-          }
-          prevY = y;
-        }
+        const breaks = discontinuities.map((d) => ({ x: d.x, epsilon }));
 
         return {
           id: fn.id,
@@ -901,60 +858,42 @@ export default function App() {
   const onWheel = (event) => {
     event.preventDefault();
     const zoom = event.deltaY > 0 ? 1.1 : 0.9;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const anchorX = view.xMin + ((event.clientX - rect.left) / rect.width) * (view.xMax - view.xMin);
-    const anchorY = view.yMax - ((event.clientY - rect.top) / rect.height) * (view.yMax - view.yMin);
-    setView((prev) => zoomView(prev, zoom, anchorX, anchorY));
-  };
-
-  const zoomView = (baseView, factor, anchorX, anchorY) => {
-    const xMin = anchorX - (anchorX - baseView.xMin) * factor;
-    const xMax = anchorX + (baseView.xMax - anchorX) * factor;
-    const yMin = anchorY - (anchorY - baseView.yMin) * factor;
-    const yMax = anchorY + (baseView.yMax - anchorY) * factor;
-    return { xMin, xMax, yMin, yMax };
+    setView((prev) => {
+      const xCenter = (prev.xMin + prev.xMax) / 2;
+      const yCenter = (prev.yMin + prev.yMax) / 2;
+      const xRange = (prev.xMax - prev.xMin) * zoom;
+      const yRange = (prev.yMax - prev.yMin) * zoom;
+      return {
+        xMin: xCenter - xRange / 2,
+        xMax: xCenter + xRange / 2,
+        yMin: yCenter - yRange / 2,
+        yMax: yCenter + yRange / 2
+      };
+    });
   };
 
   const zoomBy = (factor) => {
     setView((prev) => {
       const xCenter = (prev.xMin + prev.xMax) / 2;
       const yCenter = (prev.yMin + prev.yMax) / 2;
-      return zoomView(prev, factor, xCenter, yCenter);
+      const xRange = (prev.xMax - prev.xMin) * factor;
+      const yRange = (prev.yMax - prev.yMin) * factor;
+      return {
+        xMin: xCenter - xRange / 2,
+        xMax: xCenter + xRange / 2,
+        yMin: yCenter - yRange / 2,
+        yMax: yCenter + yRange / 2
+      };
     });
   };
 
-  const pointersRef = useRef(new Map());
-  const pinchRef = useRef(null);
-
-  const onPointerMove = (event) => {
+  const onMouseMove = (event) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const px = event.clientX - rect.left;
     const py = event.clientY - rect.top;
     const x = view.xMin + (px / rect.width) * (view.xMax - view.xMin);
     const y = view.yMax - (py / rect.height) * (view.yMax - view.yMin);
     setHover({ x, y });
-
-    if (!pointersRef.current.has(event.pointerId)) return;
-    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-    if (pointersRef.current.size === 2 && pinchRef.current) {
-      const points = Array.from(pointersRef.current.values());
-      const a = points[0];
-      const b = points[1];
-      const distance = Math.hypot(b.x - a.x, b.y - a.y);
-      if (distance > 0) {
-        const { startDistance, startView } = pinchRef.current;
-        const factor = startDistance / distance;
-        const midX = (a.x + b.x) / 2;
-        const midY = (a.y + b.y) / 2;
-        const anchorX =
-          startView.xMin + ((midX - rect.left) / rect.width) * (startView.xMax - startView.xMin);
-        const anchorY =
-          startView.yMax - ((midY - rect.top) / rect.height) * (startView.yMax - startView.yMin);
-        setView(zoomView(startView, factor, anchorX, anchorY));
-      }
-      return;
-    }
 
     if (dragRef.current) {
       const { startX, startY, startView } = dragRef.current;
@@ -971,52 +910,29 @@ export default function App() {
     }
   };
 
-  const onPointerDown = (event) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointersRef.current.size === 1) {
-      dragRef.current = {
-        startX: event.clientX,
-        startY: event.clientY,
-        startView: { ...view }
-      };
-    } else if (pointersRef.current.size === 2) {
-      dragRef.current = null;
-      const points = Array.from(pointersRef.current.values());
-      const a = points[0];
-      const b = points[1];
-      pinchRef.current = {
-        startDistance: Math.hypot(b.x - a.x, b.y - a.y),
-        startView: { ...view }
-      };
-    }
+  const onMouseDown = (event) => {
+    dragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startView: { ...view }
+    };
   };
 
-  const onPointerUp = (event) => {
-    pointersRef.current.delete(event.pointerId);
-    if (pointersRef.current.size < 2) {
-      pinchRef.current = null;
-    }
-    if (pointersRef.current.size === 1) {
-      const remaining = Array.from(pointersRef.current.values())[0];
-      dragRef.current = {
-        startX: remaining.x,
-        startY: remaining.y,
-        startView: { ...view }
-      };
-    } else if (pointersRef.current.size === 0) {
-      dragRef.current = null;
-    }
+  const onMouseUp = () => {
+    dragRef.current = null;
   };
 
-  const onPointerLeave = (event) => {
-    pointersRef.current.delete(event.pointerId);
+  useEffect(() => {
+    const handleUp = () => {
+      dragRef.current = null;
+    };
+    window.addEventListener("mouseup", handleUp);
+    return () => window.removeEventListener("mouseup", handleUp);
+  }, []);
+
+  const onMouseLeave = () => {
     setHover({ x: null, y: null });
-    if (pointersRef.current.size === 0) {
-      dragRef.current = null;
-      pinchRef.current = null;
-    }
+    dragRef.current = null;
   };
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1542,52 +1458,6 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                  <div className="fullscreen-card">
-                    <div className="tool-grid">
-                      <label className="checkline">
-                        <input
-                          type="checkbox"
-                          checked={viewOptions.showAxisLabels}
-                          onChange={(e) =>
-                            setViewOptions((prev) => ({ ...prev, showAxisLabels: e.target.checked }))
-                          }
-                        />
-                        Show axis values
-                      </label>
-                      <label className="checkline">
-                        <input
-                          type="checkbox"
-                          checked={viewOptions.showAsymptotes}
-                          onChange={(e) =>
-                            setViewOptions((prev) => ({ ...prev, showAsymptotes: e.target.checked }))
-                          }
-                        />
-                        Show asymptotes
-                      </label>
-                      <label className="checkline">
-                        <input
-                          type="checkbox"
-                          checked={viewOptions.showHoverReadout}
-                          onChange={(e) =>
-                            setViewOptions((prev) => ({ ...prev, showHoverReadout: e.target.checked }))
-                          }
-                        />
-                        Show hover coordinates
-                      </label>
-                      <label>
-                        Dot size
-                        <input
-                          type="range"
-                          min="2"
-                          max="10"
-                          value={viewOptions.dotSize}
-                          onChange={(e) =>
-                            setViewOptions((prev) => ({ ...prev, dotSize: Number(e.target.value) }))
-                          }
-                        />
-                      </label>
-                    </div>
-                  </div>
                   <div className="view-actions">
                     <button className="ghost" onClick={() => zoomBy(0.85)}>
                       Zoom In
@@ -1663,11 +1533,10 @@ export default function App() {
             className="canvas-wrap"
             ref={wrapperRef}
             onWheel={onWheel}
-            onPointerMove={onPointerMove}
-            onPointerDown={onPointerDown}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-            onPointerLeave={onPointerLeave}
+            onMouseMove={onMouseMove}
+            onMouseDown={onMouseDown}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseLeave}
           >
             <canvas ref={canvasRef} className="plot" />
             {viewOptions.showHoverReadout ? (
@@ -1676,7 +1545,7 @@ export default function App() {
                 <span>y: {hover.y === null ? "--" : formatNumber(hover.y)}</span>
               </div>
             ) : null}
-            <div className="canvas-hint">Scroll or pinch to zoom. Drag to pan.</div>
+            <div className="canvas-hint">Scroll to zoom. Drag to pan.</div>
           </div>
         </section>
       </main>
