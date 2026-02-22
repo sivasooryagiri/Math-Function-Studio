@@ -162,8 +162,10 @@ function drawGraph(ctx, width, height, view, plots, options = {}) {
     ctx.beginPath();
 
     let started = false;
+    let prevPy = null;
     const breaks = plot.breaks || [];
     let breakIndex = 0;
+    const yClip = Math.max(1, yRange * 5);
 
     for (let px = 0; px <= width; px += 1) {
       const x = xMin + (px / width) * xRange;
@@ -175,6 +177,12 @@ function drawGraph(ctx, width, height, view, plots, options = {}) {
       }
       if (!Number.isFinite(y)) {
         started = false;
+        prevPy = null;
+        continue;
+      }
+      if (Math.abs(y) > yClip) {
+        started = false;
+        prevPy = null;
         continue;
       }
       const py = yToPx(y);
@@ -187,6 +195,12 @@ function drawGraph(ctx, width, height, view, plots, options = {}) {
         Math.abs(x - breaks[breakIndex].x) <= breaks[breakIndex].epsilon
       ) {
         started = false;
+        prevPy = null;
+        continue;
+      }
+      if (prevPy !== null && Math.abs(py - prevPy) > height * 1.5) {
+        started = false;
+        prevPy = null;
         continue;
       }
 
@@ -196,6 +210,7 @@ function drawGraph(ctx, width, height, view, plots, options = {}) {
       } else {
         ctx.lineTo(px, py);
       }
+      prevPy = py;
     }
 
     ctx.stroke();
@@ -224,10 +239,11 @@ function drawGraph(ctx, width, height, view, plots, options = {}) {
     plots.forEach((plot) => {
       const lines = plot.asymptotes || [];
       if (lines.length === 0) return;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([6, 6]);
-      lines.forEach((px) => {
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([8, 6]);
+      lines.forEach((x) => {
+        ctx.strokeStyle = hexToRgba(plot.color, 0.7);
+        const px = xToPx(x);
         ctx.beginPath();
         ctx.moveTo(px, 0);
         ctx.lineTo(px, height);
@@ -349,6 +365,16 @@ function detectDivisionDiscontinuities(ast, context, view, sampleCount) {
   return disc;
 }
 
+function hasTanCall(node) {
+  if (!node) return false;
+  if (node.type === "call" && node.name === "tan") return true;
+  if (node.left && hasTanCall(node.left)) return true;
+  if (node.right && hasTanCall(node.right)) return true;
+  if (node.value && hasTanCall(node.value)) return true;
+  if (node.args && node.args.some((arg) => hasTanCall(arg))) return true;
+  return false;
+}
+
  
 
 function buildSampledFn(values, xMin, xMax) {
@@ -425,6 +451,118 @@ function buildSvgDocument(view, plots, width, height) {
   });
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">\n  <rect width="100%" height="100%" fill="#07141d"/>\n  ${paths}\n</svg>`;
+}
+
+function buildSvgWithOverlay(view, plots, width, height, visibleFunctions, analysis) {
+  const base = buildSvgDocument(view, plots, width, height);
+  const watermark = "Math Function Studio";
+  const legendItems = visibleFunctions.map(
+    (fn) =>
+      `<g><rect width="12" height="12" fill="${fn.color}" rx="2" ry="2"/><text x="18" y="10" fill="#e6eef5" font-size="12" font-family="JetBrains Mono, monospace">${fn.name}</text></g>`
+  );
+  const deriv = analysis.showDerivative
+    ? `<g><line x1="0" y1="6" x2="18" y2="6" stroke="#b197fc" stroke-dasharray="6 6" /><text x="24" y="10" fill="#e6eef5" font-size="12" font-family="JetBrains Mono, monospace">Derivative</text></g>`
+    : "";
+  const integ = analysis.showIntegral
+    ? `<g><line x1="0" y1="6" x2="18" y2="6" stroke="#63e6be" stroke-dasharray="2 6" /><text x="24" y="10" fill="#e6eef5" font-size="12" font-family="JetBrains Mono, monospace">Integral</text></g>`
+    : "";
+  const asym = `<g><line x1="0" y1="6" x2="18" y2="6" stroke="#e6eef5" stroke-dasharray="8 6" /><text x="24" y="10" fill="#e6eef5" font-size="12" font-family="JetBrains Mono, monospace">Asymptote</text></g>`;
+  const eqLines = visibleFunctions.map(
+    (fn) =>
+      `<text fill="#c7d2dc" font-size="12" font-family="JetBrains Mono, monospace">${fn.name}(x) = ${fn.expr || "?"}</text>`
+  );
+
+  const legendBlock = `
+  <g transform="translate(20, 20)">
+    ${legendItems
+      .map((g, i) => `<g transform="translate(0, ${i * 18})">${g}</g>`)
+      .join("")}
+    ${deriv ? `<g transform="translate(0, ${legendItems.length * 18})">${deriv}</g>` : ""}
+    ${
+      integ
+        ? `<g transform="translate(0, ${(legendItems.length + (deriv ? 1 : 0)) * 18})">${integ}</g>`
+        : ""
+    }
+    <g transform="translate(0, ${(legendItems.length + (deriv ? 1 : 0) + (integ ? 1 : 0)) * 18})">${asym}</g>
+  </g>`;
+
+  const eqBlock = `
+  <g transform="translate(20, ${height - 20 - eqLines.length * 16})">
+    ${eqLines.map((t, i) => `<g transform="translate(0, ${i * 16})">${t}</g>`).join("")}
+  </g>`;
+
+  const watermarkBlock = `<text x="${width - 20}" y="${height - 16}" text-anchor="end" fill="rgba(230,238,245,0.35)" font-size="12" font-family="JetBrains Mono, monospace">${watermark}</text>`;
+
+  return base.replace("</svg>", `${legendBlock}${eqBlock}${watermarkBlock}\n</svg>`);
+}
+
+function drawExportOverlay(ctx, width, height, visibleFunctions, analysis) {
+  const padding = 16;
+  ctx.save();
+  ctx.font = "12px 'JetBrains Mono', monospace";
+  ctx.textBaseline = "top";
+
+  let y = padding;
+  visibleFunctions.forEach((fn) => {
+    ctx.fillStyle = fn.color;
+    ctx.fillRect(padding, y + 2, 12, 12);
+    ctx.fillStyle = "rgba(230, 238, 245, 0.95)";
+    ctx.fillText(fn.name, padding + 18, y);
+    y += 18;
+  });
+
+  if (analysis.showDerivative) {
+    ctx.strokeStyle = "#b197fc";
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(padding, y + 8);
+    ctx.lineTo(padding + 18, y + 8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(230, 238, 245, 0.95)";
+    ctx.fillText("Derivative", padding + 24, y);
+    y += 18;
+  }
+
+  if (analysis.showIntegral) {
+    ctx.strokeStyle = "#63e6be";
+    ctx.setLineDash([2, 6]);
+    ctx.beginPath();
+    ctx.moveTo(padding, y + 8);
+    ctx.lineTo(padding + 18, y + 8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(230, 238, 245, 0.95)";
+    ctx.fillText("Integral", padding + 24, y);
+    y += 18;
+  }
+
+  ctx.strokeStyle = "rgba(230, 238, 245, 0.6)";
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.moveTo(padding, y + 8);
+  ctx.lineTo(padding + 18, y + 8);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(230, 238, 245, 0.95)";
+  ctx.fillText("Asymptote", padding + 24, y);
+
+  // equations at bottom
+  ctx.fillStyle = "rgba(199, 210, 220, 0.95)";
+  ctx.textBaseline = "bottom";
+  const eqLines = visibleFunctions.map((fn) => `${fn.name}(x) = ${fn.expr || "?"}`);
+  let eqY = height - padding;
+  for (let i = eqLines.length - 1; i >= 0; i -= 1) {
+    ctx.fillText(eqLines[i], padding, eqY);
+    eqY -= 16;
+  }
+
+  // watermark
+  ctx.fillStyle = "rgba(230, 238, 245, 0.35)";
+  ctx.textBaseline = "bottom";
+  ctx.textAlign = "right";
+  ctx.fillText("Math Function Studio", width - padding, height - padding);
+  ctx.restore();
 }
 
 export default function App() {
@@ -506,6 +644,11 @@ export default function App() {
     return map;
   }, [functions, nameCounts, registry.errors]);
 
+  const visibleFunctions = useMemo(
+    () => functions.filter((fn) => fn.visible && fn.name && !errors[fn.id]),
+    [functions, errors]
+  );
+
   const combineError = useMemo(() => {
     if (functionNames.length === 0) return "Add a named function first";
     const reserved = new Set([...BUILTIN_KEYS, ...CONSTANT_KEYS, "x"]);
@@ -560,6 +703,13 @@ export default function App() {
 
         const dots = [];
         const asymptotes = [];
+        const asymptoteSet = new Set();
+        const addAsymptote = (x) => {
+          const key = x.toFixed(6);
+          if (asymptoteSet.has(key)) return;
+          asymptoteSet.add(key);
+          asymptotes.push(x);
+        };
         discontinuities.forEach((d) => {
           const xPx = clamp(((d.x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
           if (d.removable && d.y !== null && Number.isFinite(d.y)) {
@@ -599,11 +749,34 @@ export default function App() {
               );
               dots.push({ x: xPx, y: yPx, filled: false });
             }
-            asymptotes.push(xPx);
+            addAsymptote(d.x);
           }
         });
 
-        const breaks = discontinuities.map((d) => ({ x: d.x, epsilon }));
+        const breaks = [];
+        discontinuities.forEach((d) => {
+          breaks.push({ x: d.x, epsilon });
+        });
+
+        // Add asymptotes for tan() analytically so they remain visible when zoomed out.
+        const astHasTan = ast ? hasTanCall(ast) : false;
+        if (astHasTan) {
+          const xMin = view.xMin;
+          const xMax = view.xMax;
+          const step = angleUnit === "deg" ? 180 : Math.PI;
+          const offset = angleUnit === "deg" ? 90 : Math.PI / 2;
+          const minPxGap = Math.max(8, size.width / 120);
+          let lastAsymptotePx = -Infinity;
+          const start =
+            offset + Math.floor((xMin - offset) / step) * step;
+          for (let x = start; x <= xMax; x += step) {
+            const xPx = clamp(((x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
+            if (xPx - lastAsymptotePx < minPxGap) continue;
+            addAsymptote(x);
+            breaks.push({ x, epsilon });
+            lastAsymptotePx = xPx;
+          }
+        }
 
         return {
           id: fn.id,
@@ -987,6 +1160,7 @@ export default function App() {
       showAxisLabels: true,
       labelFormatter: intLabel
     });
+    drawExportOverlay(ctx, size.width, size.height, visibleFunctions, analysis);
     const url = exportCanvas.toDataURL("image/png");
     const link = document.createElement("a");
     link.href = url;
@@ -996,7 +1170,7 @@ export default function App() {
 
   const exportSvg = () => {
     const plots = getPlots();
-    const svg = buildSvgDocument(view, plots, 1200, 720);
+    const svg = buildSvgWithOverlay(view, plots, 1200, 720, visibleFunctions, analysis);
     const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1458,6 +1632,52 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+                  <div className="fullscreen-card">
+                    <div className="tool-grid">
+                      <label className="checkline">
+                        <input
+                          type="checkbox"
+                          checked={viewOptions.showAxisLabels}
+                          onChange={(e) =>
+                            setViewOptions((prev) => ({ ...prev, showAxisLabels: e.target.checked }))
+                          }
+                        />
+                        Show axis values
+                      </label>
+                      <label className="checkline">
+                        <input
+                          type="checkbox"
+                          checked={viewOptions.showAsymptotes}
+                          onChange={(e) =>
+                            setViewOptions((prev) => ({ ...prev, showAsymptotes: e.target.checked }))
+                          }
+                        />
+                        Show asymptotes
+                      </label>
+                      <label className="checkline">
+                        <input
+                          type="checkbox"
+                          checked={viewOptions.showHoverReadout}
+                          onChange={(e) =>
+                            setViewOptions((prev) => ({ ...prev, showHoverReadout: e.target.checked }))
+                          }
+                        />
+                        Show hover coordinates
+                      </label>
+                      <label>
+                        Dot size
+                        <input
+                          type="range"
+                          min="2"
+                          max="10"
+                          value={viewOptions.dotSize}
+                          onChange={(e) =>
+                            setViewOptions((prev) => ({ ...prev, dotSize: Number(e.target.value) }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <div className="view-actions">
                     <button className="ghost" onClick={() => zoomBy(0.85)}>
                       Zoom In
@@ -1538,6 +1758,42 @@ export default function App() {
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseLeave}
           >
+            {isFullscreen ? (
+              <div className="fullscreen-overlay">
+                <div className="overlay-legend">
+                  {visibleFunctions.map((fn) => (
+                    <div key={fn.id} className="overlay-item">
+                      <span className="overlay-swatch" style={{ background: fn.color }} />
+                      <span>{fn.name}</span>
+                    </div>
+                  ))}
+                  {analysis.showDerivative ? (
+                    <div className="overlay-item">
+                      <span className="overlay-line deriv" />
+                      <span>Derivative</span>
+                    </div>
+                  ) : null}
+                  {analysis.showIntegral ? (
+                    <div className="overlay-item">
+                      <span className="overlay-line integ" />
+                      <span>Integral</span>
+                    </div>
+                  ) : null}
+                  <div className="overlay-item">
+                    <span className="overlay-line asymptote" />
+                    <span>Asymptote</span>
+                  </div>
+                </div>
+                <div className="overlay-eq">
+                  {visibleFunctions.map((fn) => (
+                    <div key={fn.id} className="overlay-eq-row">
+                      {fn.name}(x) = {fn.expr || "?"}
+                    </div>
+                  ))}
+                </div>
+                <div className="overlay-watermark">Math Function Studio</div>
+              </div>
+            ) : null}
             <canvas ref={canvasRef} className="plot" />
             {viewOptions.showHoverReadout ? (
               <div className="canvas-readout">
