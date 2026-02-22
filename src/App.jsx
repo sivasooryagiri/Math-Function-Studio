@@ -1807,30 +1807,30 @@ export default function App() {
       </main>
 
       <section id="limitations" className="notice">
-        <h2>What’s Possible & What’s Not (Yet)</h2>
+        <h2>What’s Possible & What’s Next</h2>
         <div className="notice-grid">
           <div>
-            <h3>Currently Possible</h3>
+            <h3>What You Can Do</h3>
             <ul>
-              <li>Custom expressions with trig, logs, exponentials, roots.</li>
-              <li>Function composition, sum, product, and mixing functions.</li>
-              <li>Numeric derivative and integral overlays.</li>
-              <li>Discontinuity dots for division-based removable/vertical cases.</li>
-              <li>PNG/SVG export with axis labels.</li>
+              <li>Plot custom expressions with trig, logs, exponentials, roots.</li>
+              <li>Compose, add, and multiply functions instantly.</li>
+              <li>Overlay numeric derivative and integral curves.</li>
+              <li>Highlight division-based discontinuities and asymptotes.</li>
+              <li>Export clean PNG/SVG graphics.</li>
             </ul>
           </div>
           <div>
             <h3>Current Limits</h3>
             <ul>
-              <li>Discontinuity detection only for division by zero.</li>
+              <li>Discontinuity detection is numeric and focused on division-based breaks.</li>
               <li>No symbolic simplification (e.g., canceling factors).</li>
-              <li>Very complex expressions may slow the UI.</li>
+              <li>Very complex expressions may slow rendering.</li>
             </ul>
           </div>
           <div>
-            <h3>Future Possibilities</h3>
+            <h3>Planned Improvements</h3>
             <ul>
-              <li>Domain analysis for `log`, `sqrt`, and `tan` asymptotes.</li>
+              <li>Better domain analysis for `log`, `sqrt`, and trig functions.</li>
               <li>Symbolic simplification and exact discontinuity detection.</li>
               <li>Analytic derivative and integral for common functions.</li>
               <li>Multi-graph export with annotations.</li>
@@ -1841,6 +1841,10 @@ export default function App() {
           This is a vibe coded project by{" "}
           <a className="link" href="https://deadtechguy.fun/" target="_blank" rel="noreferrer">
             DeadTechGuy
+          </a>
+          . Follow on{" "}
+          <a className="link" href="https://x.com/dtg_fun" target="_blank" rel="noreferrer">
+            X (Twitter)
           </a>
           .
         </p>
