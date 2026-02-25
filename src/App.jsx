@@ -29,6 +29,9 @@ const QUICK_INSERTS = [
   { label: "sin()", value: "sin(" },
   { label: "cos()", value: "cos(" },
   { label: "tan()", value: "tan(" },
+  { label: "cot()", value: "cot(" },
+  { label: "sec()", value: "sec(" },
+  { label: "cosec()", value: "cosec(" },
   { label: "ln()", value: "ln(" },
   { label: "log()", value: "log(" },
   { label: "exp()", value: "exp(" },
@@ -40,13 +43,23 @@ const ADVANCED_INSERTS = [
   { label: "asin()", value: "asin(" },
   { label: "acos()", value: "acos(" },
   { label: "atan()", value: "atan(" },
+  { label: "acot()", value: "acot(" },
+  { label: "asec()", value: "asec(" },
+  { label: "acsc()", value: "acsc(" },
+  { label: "acosec()", value: "acosec(" },
   { label: "atan2()", value: "atan2(" },
   { label: "sinh()", value: "sinh(" },
   { label: "cosh()", value: "cosh(" },
   { label: "tanh()", value: "tanh(" },
+  { label: "coth()", value: "coth(" },
+  { label: "sech()", value: "sech(" },
+  { label: "csch()", value: "csch(" },
   { label: "asinh()", value: "asinh(" },
   { label: "acosh()", value: "acosh(" },
-  { label: "atanh()", value: "atanh(" }
+  { label: "atanh()", value: "atanh(" },
+  { label: "acoth()", value: "acoth(" },
+  { label: "asech()", value: "asech(" },
+  { label: "acsch()", value: "acsch(" }
 ];
 
 const CONSTANT_INSERTS = [
@@ -365,14 +378,14 @@ function detectDivisionDiscontinuities(ast, context, view, sampleCount) {
   return disc;
 }
 
-function hasTanCall(node) {
-  if (!node) return false;
-  if (node.type === "call" && node.name === "tan") return true;
-  if (node.left && hasTanCall(node.left)) return true;
-  if (node.right && hasTanCall(node.right)) return true;
-  if (node.value && hasTanCall(node.value)) return true;
-  if (node.args && node.args.some((arg) => hasTanCall(arg))) return true;
-  return false;
+function collectCallNames(node, acc = new Set()) {
+  if (!node) return acc;
+  if (node.type === "call" && node.name) acc.add(node.name);
+  if (node.left) collectCallNames(node.left, acc);
+  if (node.right) collectCallNames(node.right, acc);
+  if (node.value) collectCallNames(node.value, acc);
+  if (node.args) node.args.forEach((arg) => collectCallNames(arg, acc));
+  return acc;
 }
 
  
@@ -758,23 +771,34 @@ export default function App() {
           breaks.push({ x: d.x, epsilon });
         });
 
-        // Add asymptotes for tan() analytically so they remain visible when zoomed out.
-        const astHasTan = ast ? hasTanCall(ast) : false;
-        if (astHasTan) {
+        // Add asymptotes for periodic trig reciprocals so they remain visible when zoomed out.
+        const callNames = ast ? collectCallNames(ast) : null;
+        const hasOffsetAsymptotes =
+          callNames && (callNames.has("tan") || callNames.has("sec"));
+        const hasZeroAsymptotes =
+          callNames && (callNames.has("cot") || callNames.has("csc") || callNames.has("cosec"));
+        if (hasOffsetAsymptotes || hasZeroAsymptotes) {
           const xMin = view.xMin;
           const xMax = view.xMax;
           const step = angleUnit === "deg" ? 180 : Math.PI;
-          const offset = angleUnit === "deg" ? 90 : Math.PI / 2;
           const minPxGap = Math.max(8, size.width / 120);
-          let lastAsymptotePx = -Infinity;
-          const start =
-            offset + Math.floor((xMin - offset) / step) * step;
-          for (let x = start; x <= xMax; x += step) {
-            const xPx = clamp(((x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
-            if (xPx - lastAsymptotePx < minPxGap) continue;
-            addAsymptote(x);
-            breaks.push({ x, epsilon });
-            lastAsymptotePx = xPx;
+          const addPeriodicAsymptotes = (offset) => {
+            let lastAsymptotePx = -Infinity;
+            const start = offset + Math.floor((xMin - offset) / step) * step;
+            for (let x = start; x <= xMax; x += step) {
+              const xPx = clamp(((x - view.xMin) / (view.xMax - view.xMin)) * size.width, 2, size.width - 2);
+              if (xPx - lastAsymptotePx < minPxGap) continue;
+              addAsymptote(x);
+              breaks.push({ x, epsilon });
+              lastAsymptotePx = xPx;
+            }
+          };
+          if (hasOffsetAsymptotes) {
+            const offset = angleUnit === "deg" ? 90 : Math.PI / 2;
+            addPeriodicAsymptotes(offset);
+          }
+          if (hasZeroAsymptotes) {
+            addPeriodicAsymptotes(0);
           }
         }
 
@@ -1060,12 +1084,17 @@ export default function App() {
     });
   };
 
-  const onMouseMove = (event) => {
+  const getPointerPosition = (event) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const px = event.clientX - rect.left;
     const py = event.clientY - rect.top;
     const x = view.xMin + (px / rect.width) * (view.xMax - view.xMin);
     const y = view.yMax - (py / rect.height) * (view.yMax - view.yMin);
+    return { rect, x, y };
+  };
+
+  const onPointerMove = (event) => {
+    const { rect, x, y } = getPointerPosition(event);
     setHover({ x, y });
 
     if (dragRef.current) {
@@ -1083,7 +1112,11 @@ export default function App() {
     }
   };
 
-  const onMouseDown = (event) => {
+  const onPointerDown = (event) => {
+    if (event.pointerType === "touch") event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const { x, y } = getPointerPosition(event);
+    setHover({ x, y });
     dragRef.current = {
       startX: event.clientX,
       startY: event.clientY,
@@ -1091,19 +1124,15 @@ export default function App() {
     };
   };
 
-  const onMouseUp = () => {
+  const onPointerUp = (event) => {
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
     dragRef.current = null;
+    if (event.pointerType === "touch") {
+      setHover({ x: null, y: null });
+    }
   };
 
-  useEffect(() => {
-    const handleUp = () => {
-      dragRef.current = null;
-    };
-    window.addEventListener("mouseup", handleUp);
-    return () => window.removeEventListener("mouseup", handleUp);
-  }, []);
-
-  const onMouseLeave = () => {
+  const onPointerLeave = () => {
     setHover({ x: null, y: null });
     dragRef.current = null;
   };
@@ -1753,10 +1782,10 @@ export default function App() {
             className="canvas-wrap"
             ref={wrapperRef}
             onWheel={onWheel}
-            onMouseMove={onMouseMove}
-            onMouseDown={onMouseDown}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseLeave}
+            onPointerMove={onPointerMove}
+            onPointerDown={onPointerDown}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerLeave}
           >
             {isFullscreen ? (
               <div className="fullscreen-overlay">
@@ -1795,6 +1824,17 @@ export default function App() {
               </div>
             ) : null}
             <canvas ref={canvasRef} className="plot" />
+            {viewOptions.showHoverReadout && hover.x !== null ? (
+              <div
+                className="hover-dot"
+                style={{
+                  left: `${((hover.x - view.xMin) / (view.xMax - view.xMin)) * 100}%`,
+                  top: `${((view.yMax - hover.y) / (view.yMax - view.yMin)) * 100}%`,
+                  width: `${Math.max(6, viewOptions.dotSize * 1.4)}px`,
+                  height: `${Math.max(6, viewOptions.dotSize * 1.4)}px`
+                }}
+              />
+            ) : null}
             {viewOptions.showHoverReadout ? (
               <div className="canvas-readout">
                 <span>x: {hover.x === null ? "--" : formatNumber(hover.x)}</span>
